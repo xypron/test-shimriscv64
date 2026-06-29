@@ -5,7 +5,7 @@ EFI_IMAGE_SECURITY_DATABASE_GUID="d719b2cb-3d3a-4596-a3bc-dad00e67656f"
 
 all:
 	git submodule update --init --recursive
-	make shimriscv64.efi
+	make shimriscv64.signed.efi
 	make u-boot.elf
 
 dependencies:
@@ -29,6 +29,9 @@ efi-ca.crt: efi-ca.key
 		-outform der -out efi-ca.crt -days 3650 \
 		-subj "/CN=My Secure Boot CA/O=My Org/C=DE"
 
+efi-ca.pem: efi-ca.crt
+	openssl x509 -inform der -in efi-ca.crt -outform pem -out efi-ca.pem
+
 efi.key:
 	# Generate signing (vendor/leaf) private key
 	openssl genrsa -out efi.key 4096
@@ -47,7 +50,7 @@ efi-ext.cnf:
 		'authorityKeyIdentifier=keyid,issuer' \
 		> efi-ext.cnf
 
-efi.crt: efi-ca.crt efi.csr efi-ext.cnf
+efi.crt: efi-ca.pem efi.csr efi-ext.cnf
 	# Sign leaf certificate with CA (output DER)
 	openssl x509 -req -in efi.csr \
 		-CAform der -CA efi-ca.crt -CAkey efi-ca.key -CAcreateserial \
@@ -65,6 +68,13 @@ shimriscv64.efi: efi.pem
 	VENDOR_CERT_FILE='../efi.crt' \
 	POST_PROCESS_PE_FLAGS='-n'
 	cp shim/*.efi .
+
+shimriscv64.signed.efi:
+	sbsign \
+	--key efi.key \
+	--cert efi.pem \
+	--output shimriscv64.signed.efi \
+	shimriscv64.efi
 
 PK.key:	
 	openssl req -x509 -sha256 -newkey rsa:2048 -subj /CN=TEST_PK/ \
