@@ -1,0 +1,89 @@
+EFI_GLOBAL_VARIABLE_GUID="8be4df61-93ca-11d2-aa0d-00e098032b8c"
+EFI_IMAGE_SECURITY_DATABASE_GUID="d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+
+.PHONY: dependencies
+
+all:
+	git submodule update --init --recursive
+	make shimriscv64.efi
+
+dependencies:
+	sudo apt-get update
+	sudo apt-get install \
+	  efitools \
+	  python3-openssl
+
+efi-ca.key:
+	# Generate CA private key
+	openssl genrsa -out efi-ca.key 4096
+
+efi-ca.crt: efi-ca.key
+	# Create CA certificate (DER, self-signed)
+	openssl req -new -x509 -key efi-ca.key \
+		-outform der -out efi-ca.crt -days 3650 \
+		-subj "/CN=My Secure Boot CA/O=My Org/C=DE"
+
+efi.key:
+	# Generate signing (vendor/leaf) private key
+	openssl genrsa -out efi.key 4096
+
+efi.csr: efi.key
+	# Create signing key CSR
+	openssl req -new -key efi.key -out efi.csr \
+		-subj "/CN=My Secure Boot Signing Key/O=My Org/C=DE"
+
+efi-ext.cnf:
+	@printf '%s\n' \
+		'basicConstraints=critical,CA:FALSE' \
+		'keyUsage=critical,digitalSignature' \
+		'extendedKeyUsage=critical,codeSigning' \
+		'subjectKeyIdentifier=hash' \
+		'authorityKeyIdentifier=keyid,issuer' \
+		> efi-ext.cnf
+
+efi.crt: efi-ca.crt efi.csr efi-ext.cnf
+	# Sign leaf certificate with CA (output DER)
+	openssl x509 -req -in efi.csr \
+		-CAform der -CA efi-ca.crt -CAkey efi-ca.key -CAcreateserial \
+		-outform der -out efi.crt -days 3650 \
+		-extfile efi-ext.cnf
+
+efi.pem: efi.crt
+	# Convert leaf certificate to PEM (for enrollment tools / inspection)
+	openssl x509 -inform der -in efi.crt -outform pem -out efi.pem
+
+shimriscv64.efi: efi.pem
+	cd shim && \
+	make \
+	-j$(nproc)
+	VENDOR_CERT_FILE='../efi.crt' \
+	POST_PROCESS_PE_FLAGS='-n'
+	cp shim/*.efi .
+
+PK.key:	
+	openssl req -x509 -sha256 -newkey rsa:2048 -subj /CN=TEST_PK/ \
+	-keyout PK.key -out PK.crt -nodes -days 3650
+
+PK.auth: PK.key
+	cert-to-efi-sig-list -g $(EFI_GLOBAL_VARIABLE_GUID) PK.crt PK.esl
+	sign-efi-sig-list -c PK.crt -k PK.key PK PK.esl PK.auth
+
+KEK.key: PK.auth
+	openssl req -x509 -sha256 -newkey rsa:2048 -subj /CN=TEST_KEK/ \
+	-keyout KEK.key -out KEK.crt -nodes -days 3650
+
+KEK.auth: KEK.key
+	cert-to-efi-sig-list -g $(EFI_GLOBAL_VARIABLE_GUID) KEK.crt KEK.esl
+	sign-efi-sig-list -c PK.crt -k PK.key KEK KEK.esl KEK.auth
+
+db.auth: KEK.auth
+	# 1) Create db ESL that contains the CA cert (DER)
+	cert-to-efi-sig-list -g $(EFI_IMAGE_SECURITY_DATABASE_GUID) efi-ca.crt db.esl
+	# 2) Sign db.esl with KEK to create db.auth
+	sign-efi-sig-list -c KEK.crt -k KEK.key db db.esl db.auth
+
+clean:
+	rm -f *.auth *.esl
+	rm -f efi.*
+	rm -f *.efi
+	cd shim && make clean
