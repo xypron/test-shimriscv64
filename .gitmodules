@@ -2,3 +2,6 @@
 	path = shim
 	url = https://github.com/xypron/shim.git
 	branch = riscv64
+[submodule "u-boot"]
+	path = u-boot
+	url = https://github.com/trini/u-boot.git

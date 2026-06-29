@@ -6,12 +6,18 @@ EFI_IMAGE_SECURITY_DATABASE_GUID="d719b2cb-3d3a-4596-a3bc-dad00e67656f"
 all:
 	git submodule update --init --recursive
 	make shimriscv64.efi
+	make u-boot.elf
 
 dependencies:
 	sudo apt-get update
 	sudo apt-get install \
+	  bison \
 	  efitools \
-	  python3-openssl
+	  flex \
+	  libgnutls28-dev \
+	  libssl-dev \
+	  python3-openssl \
+	  qemu-system-riscv
 
 efi-ca.key:
 	# Generate CA private key
@@ -82,8 +88,36 @@ db.auth: KEK.auth
 	# 2) Sign db.esl with KEK to create db.auth
 	sign-efi-sig-list -c KEK.crt -k KEK.key db db.esl db.auth
 
+ubootefi.var: db.auth
+	rm -f ubootefi.tmp
+	u-boot/tools/efivar.py set -i ubootefi.tmp -a nv,bs,rt,at \
+	  -g $(EFI_GLOBAL_VARIABLE_GUID) -n PK  -d PK.esl  -t file
+	u-boot/tools/efivar.py set -i ubootefi.tmp -a nv,bs,rt,at \
+	  -g $(EFI_GLOBAL_VARIABLE_GUID) -n KEK -d KEK.esl -t file
+	u-boot/tools/efivar.py set -i ubootefi.tmp -a nv,bs,rt,at \
+	  -g $(EFI_IMAGE_SECURITY_DATABASE_GUID) -n db  -d db.esl  -t file
+	u-boot/tools/efivar.py set -i ubootefi.tmp -a bs,rt,ro \
+	  -g $(EFI_GLOBAL_VARIABLE_GUID) -n DeployedMode -d 1 -t u8
+	mv ubootefi.tmp ubootefi.var
+
+u-boot.elf: ubootefi.var
+	cd u-boot && make qemu-riscv64_smode_defconfig ../../ubootvar.config -j$$(nproc)
+	cd u-boot && make -j$$(nproc)
+	cp u-boot/u-boot u-boot.elf
+
+run:
+	qemu-system-riscv64 \
+	  -M virt \
+	  -m 1G \
+	  -nographic \
+	  -semihosting \
+	  -kernel u-boot.elf
+
 clean:
+	# Keep private keys and certificates
 	rm -f *.auth *.esl
 	rm -f efi.*
 	rm -f *.efi
 	cd shim && make clean
+	rm uboot
+	rm u-boot.elf
