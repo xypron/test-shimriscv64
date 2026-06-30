@@ -14,6 +14,7 @@ dependencies:
 	  bison \
 	  efitools \
 	  flex \
+	  grub-efi-riscv64-unsigned \
 	  libgnutls28-dev \
 	  libssl-dev \
 	  python3-openssl \
@@ -69,7 +70,25 @@ shimriscv64.efi: efi.pem
 	POST_PROCESS_PE_FLAGS='-n'
 	cp shim/*.efi .
 
-shimriscv64.signed.efi:
+grubriscv64.efi:
+	cp /usr/lib/grub/riscv64-efi/monolithic/grubriscv64.efi .
+
+shimriscv64.signed.efi: grubriscv64.efi shimriscv64.efi
+	sbsign \
+	--key efi.key \
+	--cert efi.pem \
+	--output fbriscv64.signed.efi \
+	fbriscv64.efi
+	sbsign \
+	--key efi.key \
+	--cert efi.pem \
+	--output grubriscv64.signed.efi \
+	grubriscv64.efi
+	sbsign \
+	--key efi.key \
+	--cert efi.pem \
+	--output mmriscv64.signed.efi \
+	mmriscv64.efi
 	sbsign \
 	--key efi.key \
 	--cert efi.pem \
@@ -92,9 +111,9 @@ KEK.auth: KEK.key
 	cert-to-efi-sig-list -g $(EFI_GLOBAL_VARIABLE_GUID) KEK.crt KEK.esl
 	sign-efi-sig-list -c PK.crt -k PK.key KEK KEK.esl KEK.auth
 
-db.auth: KEK.auth
+db.auth: KEK.auth efi.pem
 	# 1) Create db ESL that contains the CA cert (DER)
-	cert-to-efi-sig-list -g $(EFI_IMAGE_SECURITY_DATABASE_GUID) efi-ca.crt db.esl
+	cert-to-efi-sig-list -g $(EFI_IMAGE_SECURITY_DATABASE_GUID) efi.pem db.esl
 	# 2) Sign db.esl with KEK to create db.auth
 	sign-efi-sig-list -c KEK.crt -k KEK.key db db.esl db.auth
 
@@ -129,5 +148,4 @@ clean:
 	rm -f efi.*
 	rm -f *.efi
 	cd shim && make clean
-	rm uboot
 	rm u-boot.elf
