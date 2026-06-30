@@ -134,6 +134,11 @@ u-boot.elf: ubootefi.var
 	cd u-boot && make -j$$(nproc)
 	cp u-boot/u-boot u-boot.elf
 
+ubuntu-26.04-preinstalled-server-riscv64.img:
+	rm -f ubuntu-26.04-preinstalled-server-riscv64.img*
+	wget https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04-preinstalled-server-riscv64.img.xz
+	xz -d ubuntu-26.04-preinstalled-server-riscv64.img.xz
+
 run:
 	qemu-system-riscv64 \
 	  -M virt \
